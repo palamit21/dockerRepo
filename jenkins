@@ -1,0 +1,57 @@
+
+
+pipeline {
+    agent any
+    
+     stage ('Checkout') {
+                        echo 'Checking out SCM'
+                        checkout scm
+
+                        sh '''
+                            echo "PATH = ${PATH}"
+                            echo "M2_HOME = ${M2_HOME}"
+                        '''
+
+                        echo 'Stashing files necessary for following stages.'
+                        stash includes: 'service.yml', name: 'kubeconf'
+
+                    }
+
+       stage ('Java Build') {
+                        echo 'Maven Build'                        
+                        rtMaven.run pom: 'pom.xml', goals: 'install -Dmaven.test.skip=true', buildInfo: buildInfo
+                    }
+                    stage ('Docker Build') {
+                        def files = findFiles(glob: '**/target/*.jar')
+                        
+                        files.each {
+                            echo '** Files available **'
+                            def file = it.path
+                            echo "File Name From List = ${file}" 
+                        }
+                        
+                        def jarFile = files[0].path                        
+
+                        def found = files 
+                            .findAll{it.path.startsWith("${jar_name}-app")} 
+                            .findAll{!it.path.endsWith("-javadoc.jar")}
+                            .findAll{!it.path.endsWith("-sources.jar")}
+                            .each {
+                                jarFile = it.path
+                            }
+                        echo '** print File Name **'
+                        echo "File Name = ${jarFile}"
+
+                        docker.withRegistry(dockerurl, dockercredentials) {
+                            echo 'Building image.'
+                            def image = docker.build("$dockerimagename:${env.BUILD_ID}", "--build-arg JAR_FILE=$jarFile .")
+                            echo 'Pushing image taggeed :${env.BUILD_ID}.'
+                            image.push()
+
+                            echo 'Pushing image taggeed :latest.'
+                            image.push('latest')
+                        }
+                    }
+    }
+}
+
