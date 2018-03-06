@@ -1,57 +1,98 @@
+node {
+    def app
 
+    stage('Clone repository') {
+        /* Let's make sure we have the repository cloned to our workspace */
 
-pipeline {
-    agent any
-    
-     stage ('Checkout') {
-                        echo 'Checking out SCM'
-                        checkout scm
+        checkout scm
+    }
 
-                        sh '''
-                            echo "PATH = ${PATH}"
-                            echo "M2_HOME = ${M2_HOME}"
-                        '''
+    stage('Build image') {
+        /* This builds the actual image; synonymous to
+         * docker build on the command line */
 
-                        echo 'Stashing files necessary for following stages.'
-                        stash includes: 'service.yml', name: 'kubeconf'
+        app = docker.build("getintodevops/hellonode")
+    }
 
-                    }
+    stage('Test image') {
+        /* Ideally, we would run a test framework against our image.
+         * For this example, we're using a Volkswagen-type approach ;-) */
 
-       stage ('Java Build') {
-                        echo 'Maven Build'                        
-                        rtMaven.run pom: 'pom.xml', goals: 'install -Dmaven.test.skip=true', buildInfo: buildInfo
-                    }
-                    stage ('Docker Build') {
-                        def files = findFiles(glob: '**/target/*.jar')
-                        
-                        files.each {
-                            echo '** Files available **'
-                            def file = it.path
-                            echo "File Name From List = ${file}" 
-                        }
-                        
-                        def jarFile = files[0].path                        
+        app.inside {
+            sh 'echo "Tests passed"'
+        }
+    }
 
-                        def found = files 
-                            .findAll{it.path.startsWith("${jar_name}-app")} 
-                            .findAll{!it.path.endsWith("-javadoc.jar")}
-                            .findAll{!it.path.endsWith("-sources.jar")}
-                            .each {
-                                jarFile = it.path
-                            }
-                        echo '** print File Name **'
-                        echo "File Name = ${jarFile}"
-
-                        docker.withRegistry(dockerurl, dockercredentials) {
-                            echo 'Building image.'
-                            def image = docker.build("$dockerimagename:${env.BUILD_ID}", "--build-arg JAR_FILE=$jarFile .")
-                            echo 'Pushing image taggeed :${env.BUILD_ID}.'
-                            image.push()
-
-                            echo 'Pushing image taggeed :latest.'
-                            image.push('latest')
-                        }
-                    }
+    stage('Push image') {
+        /* Finally, we'll push the image with two tags:
+         * First, the incremental build number from Jenkins
+         * Second, the 'latest' tag.
+         * Pushing multiple tags is cheap, as all the layers are reused. */
+        docker.withRegistry('https://registry.hub.docker.com', 'docker-hub-credentials') {
+            app.push("${env.BUILD_NUMBER}")
+            app.push("latest")
+        }
     }
 }
 
+Learn how to do this and much more with an instructor:
+Get 86% OFF our DevOps Masterclass on Udemy for a limited time!
+
+That's the entirety of our pipeline specification for Jenkins. Now, we'll just need to tell Jenkins two things:
+
+    Where to find our code
+    What credentials to use to publish the Docker image
+
+We'll start by configuring the credentials:
+Configuring Docker Hub with Jenkins
+
+To store the Docker image resulting from our build, we'll be using Docker Hub. You can sign up for a free account at https://hub.docker.com.
+
+We'll need to give Jenkins access to push the image to Docker Hub. For this, we'll create Credentials in Jenkins, and refer to them in the Jenkinsfile.
+
+As you might have noticed in the above Jenkinsfile, we're using docker.withRegistry to wrap the app.push commands - this instructs Jenkins to log in to a specified registry with the specified credential id (docker-hub-credentials).
+On the Jenkins front page, click on Credentials -> System -> Global credentials -> Add Credentials
+
+On the Jenkins front page, click on Credentials -> System -> Global credentials -> Add Credentials
+Add your Docker Hub credentials as the type Username with password, with the ID docker-hub-credentials
+
+Add your Docker Hub credentials as the type Username with password, with the ID docker-hub-credentials
+Creating a job in Jenkins
+
+The final thing we need to tell Jenkins is how to find our repository. We'll create a Pipeline job, and point Jenkins to use a Jenkinsfile in our repository.
+
+Here are the steps:
+Click on New Item on the Jenkins front page.
+
+Click on New Item on the Jenkins front page.
+Type a name for your project, and select Pipeline as the project type.
+
+Type a name for your project, and select Pipeline as the project type.
+Select Poll SCM and enter a polling schedule. The example here, H/5 * * * * will poll the Git repository every five minutes. Note that I am polling for changes in this example because I am being lazy. If your repo is in Github, a much better approach is to set up webhooks.
+
+Select Poll SCM and enter a polling schedule. The example here, H/5 * * * * will poll the Git repository every five minutes.
+
+Note that I am polling for changes in this example because I am being lazy. If your repo is in Github, a much better approach is to set up webhooks.
+For the pipeline definition, choose Pipeline script from SCM, and tell Jenkins how to find your repository.
+
+For the pipeline definition, choose Pipeline script from SCM, and tell Jenkins how to find your repository.
+
+Finally, press Save and your pipeline is ready!
+
+To build it, press Build Now. After a few minutes you should see an image appear in your Docker Hub repository, and something like this on the page of your new Jenkins job:
+
+We have successfully containerised an application, and set up a Jenkins job to build and publish the image on every change to a repository. Great work!
+Next steps
+
+Now that we have set up a basic delivery pipeline, there are a few more things to consider.
+Deployment
+
+The next logical step in the pipeline would be to deploy the container automatically into a testing environment. For this, we could use something like Amazon Elastic Container Service or Rancher.
+Testing
+
+As you might have noticed in the Jenkinsfile, our approach to testing so far is rather non-exhaustive. Integrating comprehensive unit, acceptance and NFR testing into our pipeline would take us much closer to Continuous Delivery.
+Monitoring
+
+We've already added a health check in our Dockerfile. We should utilise that to monitor the health of the application, and try to fix it automatically if it's unhealthy. We should also ship all logs from the container somewhere to be stored and analysed.
+
+Disclaimer: All logos and trademarks mentioned in this article are the property of their respective owners.
